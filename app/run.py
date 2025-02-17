@@ -1,0 +1,3 @@
+from create_sittax import create_comp_and_card_sittax
+
+create_comp_and_card_sittax("4d7cb8cf43aadbade944a7820cb61cdb")
