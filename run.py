@@ -3,7 +3,9 @@ import json
 
 from create_sittax import create_comp_and_card_sittax
 from create_acessorias import create_comp_and_card_acessorias
+from fetch_emails import process_emails
 
+process_emails()
 # Função para carregar logs existentes ou criar um novo arquivo de logs
 def load_logs(log_file='logs.json'):
     if os.path.exists(log_file):
