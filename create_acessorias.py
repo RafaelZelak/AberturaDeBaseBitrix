@@ -121,6 +121,15 @@ def create_company_in_bitrix(company_data):
         return None
 
 def check_card_exists(company_id):
+    """
+    Verifica se já existe um card no CRM para a empresa, considerando apenas cards ativos.
+
+    Parâmetros:
+        company_id (str): O ID da empresa no Bitrix24.
+
+    Retorno:
+        list: Lista de IDs dos cards encontrados. Retorna uma lista vazia se nenhum card for encontrado.
+    """
     url = f"{BITRIX_WEBHOOK_URL}/crm.item.list"
     payload = {
         "entityTypeId": 187,
@@ -134,12 +143,19 @@ def check_card_exists(company_id):
 
     response = requests.post(url, json=payload)
     if response.status_code == 200:
-        result = response.json().get("result", [])
-        card_ids = [str(item["id"]) for item in result] if isinstance(result, list) else []
-        print(f"Cards existentes: {card_ids}")
+        result = response.json().get("result", {})
+        print(f"Resposta da API: {result}")
+
+        # Corrigindo o processamento do resultado
+        if "items" in result and isinstance(result["items"], list):
+            card_ids = [str(item["id"]) for item in result["items"]]
+        else:
+            card_ids = []
+
+        print(f"Cards encontrados para a empresa ID {company_id}: {card_ids}")
         return card_ids
     else:
-        print(f"Erro ao verificar cards: {response.text}")
+        print(f"Erro ao verificar cards para a empresa ID {company_id}: {response.text}")
         return []
 
 def create_card_in_bitrix(company_data, company_id):
@@ -149,12 +165,16 @@ def create_card_in_bitrix(company_data, company_id):
     valor_licenca = clean_and_standardize_value(company_data.get("valorLicenca", ""))
     pacote = company_data.get("qtdCnpj", "")
 
+    if valor_mensalidade is None or valor_licenca is None:
+        print(f"❌ Erro: Valores de mensalidade ou licença inválidos para a empresa {company_data['razaoSocial']}.")
+        return None
+
     payload = {
         "entityTypeId": 187,
         "fields": {
             "title": company_data.get("razaoSocial", ""),
             "stageId": "DT187_99:NEW",
-            "categoryId": "99",
+            "categoryId": 99,
             "assignedById": 629,
             "opened": "N",
             "begindate": datetime.now().strftime("%Y-%m-%d"),
@@ -170,50 +190,72 @@ def create_card_in_bitrix(company_data, company_id):
     }
 
     response = requests.post(url, json=payload)
+
     if response.status_code == 200:
-        print(f"Card criado com sucesso para {company_data['razaoSocial']}!")
+        print(f"✅ Card criado com sucesso para a empresa {company_data['razaoSocial']}.")
+        return response.json()  # Retorna a resposta completa, incluindo o `card_id`
     else:
-        print(f"Erro ao criar card: {response.text}")
+        print(f"❌ Erro ao criar card para a empresa {company_data['razaoSocial']}: {response.text}")
+        return None
 
 def create_comp_and_card_acessorias(hash_value):
     json_path = os.path.join(CACHE_DIR, f"{hash_value}.json")
     if not os.path.exists(json_path):
-        print(f"Arquivo {hash_value}.json não encontrado.")
-        return
+        print(f"❌ Arquivo JSON para o hash {hash_value} não encontrado.")
+        return None
 
     with open(json_path, 'r', encoding='utf-8') as file:
         company_data = json.load(file)
 
-        modelo_contrato = company_data.get("modeloDeContrato", "")
-        if modelo_contrato not in ["Acessórias", "Acessórias + Komunic"]:
-            print(f"Modelo de contrato inválido: {modelo_contrato}")
-            return
+    modelo_contrato = company_data.get("modeloDeContrato", "")
+    if modelo_contrato not in ["Acessórias", "Acessórias + Komunic"]:
+        print(f"⚠️ Modelo de contrato inválido: {modelo_contrato}. Ignorando empresa.")
+        return None
 
-        cnpj = company_data.get("cnpj")
-        expected_system_id = MODELO_CONTRATO_TO_ID.get(modelo_contrato, "233")
+    cnpj = company_data.get("cnpj")
+    expected_system_id = MODELO_CONTRATO_TO_ID.get(modelo_contrato, "233")
 
-        is_affiliated, current_system = check_company_system_affiliation(cnpj, expected_system_id)
+    is_affiliated, current_system = check_company_system_affiliation(cnpj, expected_system_id)
 
-        if is_affiliated:
-            print(f"Empresa com CNPJ {cnpj} já existe no Bitrix24 e está associada ao sistema {current_system}. Ignorando criação.")
-        else:
-            if current_system:
-                print(f"Empresa existe em outro sistema: {current_system}. Atualizando...")
-                current_system_id = next((k for k, v in SYSTEM_MAPPING.items() if v == current_system), None)
+    if is_affiliated:
+        print(f"✅ Empresa com CNPJ {cnpj} já existe no Bitrix24 e está associada ao sistema {current_system}.")
+        return None
 
-                if current_system_id in SITTAX_UPDATE_MAPPING:
-                    new_system_id = SITTAX_UPDATE_MAPPING[current_system_id]
-                    if update_company_system_affiliation(cnpj, new_system_id):
-                        company_response = check_company_in_bitrix(cnpj)
-                        if company_response and company_response.get("result"):
-                            company_id = company_response["result"][0].get("ID")
-                            if not check_card_exists(company_id):
-                                print("Criando novo card...")
-                                create_card_in_bitrix(company_data, company_id)
-                else:
-                    print("Atualização não necessária para este sistema")
-            else:
-                print("Criando nova empresa e card...")
-                company_id = create_company_in_bitrix(company_data)
-                if company_id:
-                    create_card_in_bitrix(company_data, company_id)
+    # Verifica se a empresa já existe antes de criar
+    company_response = check_company_in_bitrix(cnpj)
+    if company_response and "result" in company_response and company_response["result"]:
+        company_id = company_response["result"][0]["ID"]
+        print(f"🔄 Usando empresa existente ID: {company_id}")
+    else:
+        company_id = create_company_in_bitrix(company_data)
+        if not company_id:
+            print(f"❌ Erro ao criar empresa {company_data['razaoSocial']}")
+            return None
+        print(f"🏢 Nova empresa criada com sucesso. ID: {company_id}")
+
+    # Verifica se já existe um card
+    existing_card_ids = check_card_exists(company_id)
+    if existing_card_ids:
+        print(f"⚠️ Card(s) já existente(s) para {company_data['razaoSocial']}. IDs: {existing_card_ids}")
+        # Retorna None ao invés do dicionário quando encontra cards existentes
+        return None
+
+    # Só cria um novo card se não existir nenhum
+    print("➕ Criando novo card...")
+    response = create_card_in_bitrix(company_data, company_id)
+
+    if response and "result" in response:
+        card_id = response["result"]
+        if isinstance(card_id, dict) and "item" in card_id and "id" in card_id["item"]:
+            card_id = card_id["item"]["id"]
+
+        print(f"✅ Card criado com sucesso para {company_data['razaoSocial']}. ID: {card_id}")
+        return {
+            "razaoSocial": company_data["razaoSocial"],
+            "cnpj": company_data["cnpj"],
+            "card_id": str(card_id),
+            "modeloDeContrato": modelo_contrato
+        }
+
+    print(f"❌ Erro: O card não foi criado corretamente para {company_data['razaoSocial']}.")
+    return None

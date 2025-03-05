@@ -165,3 +165,52 @@ def check_system_affiliation_from_cache(hash, modelo_contrato):
     else:
         print(f"Empresa pertence a {company_is}")
         return False
+
+def check_card_exists(company_id):
+    """
+    Verifica se já existe um card associado a uma empresa no Bitrix24.
+    Retorna o ID do primeiro card encontrado, ou None caso contrário.
+    """
+    params = {
+        "filter": {"companyId": company_id},  # Filtra cards vinculados à empresa
+        "select": ["id"]
+    }
+    response = bitrix_api_call("crm.item.list", params)
+
+    if response and "result" in response and "items" in response["result"]:
+        items = response["result"]["items"]
+        card_ids = [str(item["id"]) for item in items if "id" in item]  # Captura os IDs dos cards existentes
+
+        if card_ids:
+            print(f"✅ Cards encontrados para a empresa ID {company_id}: {card_ids}")
+            return card_ids[0]  # Retorna o primeiro card encontrado como string
+
+    print(f"❌ Nenhum card encontrado para a empresa ID {company_id}.")
+    return None  # Nenhum card encontrado
+
+def check_existing_card_in_spa(company_id, entity_type_id, bitrix_webhook_url):
+    """
+    Verifica se existe um card vinculado à empresa em um SPA específico.
+
+    :param company_id: ID da empresa no Bitrix24.
+    :param entity_type_id: ID do SPA onde procurar (Sittax = 158, Acessórias = 187).
+    :param bitrix_webhook_url: URL do webhook do Bitrix24.
+    :return: ID do card encontrado, ou None se não houver nenhum card.
+    """
+    params = {
+        "entityTypeId": entity_type_id,
+        "filter": {"companyId": company_id},  # Filtro direto pelo ID da empresa
+        "select": ["id"]
+    }
+
+    response = bitrix_api_call("crm.item.list", params)
+
+    if response and "result" in response and "items" in response["result"]:
+        items = response["result"]["items"]
+        if items:
+            card_id = str(items[0]["id"])  # Pega o primeiro card encontrado
+            print(f"✅ Card encontrado para empresa ID {company_id} no SPA {entity_type_id}: {card_id}")
+            return card_id
+
+    print(f"❌ Nenhum card encontrado para empresa ID {company_id} no SPA {entity_type_id}.")
+    return None  # Nenhum card encontrado
